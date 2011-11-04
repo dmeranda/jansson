@@ -58,14 +58,26 @@ typedef struct {
 
 typedef struct {
     json_t json;
+    json_bigr_t value;
+} json_bigreal_t;
+
+typedef struct {
+    json_t json;
     json_int_t value;
 } json_integer_t;
+
+typedef struct {
+    json_t json;
+    json_bigz_t value;
+} json_biginteger_t;
 
 #define json_to_object(json_)  container_of(json_, json_object_t, json)
 #define json_to_array(json_)   container_of(json_, json_array_t, json)
 #define json_to_string(json_)  container_of(json_, json_string_t, json)
 #define json_to_real(json_)   container_of(json_, json_real_t, json)
 #define json_to_integer(json_) container_of(json_, json_integer_t, json)
+#define json_to_biginteger(json_) container_of(json_, json_biginteger_t, json)
+#define json_to_bigreal(json_) container_of(json_, json_bigreal_t, json)
 
 size_t jsonp_hash_str(const void *ptr);
 int jsonp_str_equal(const void *ptr1, const void *ptr2);
@@ -88,9 +100,25 @@ void jsonp_error_vset(json_error_t *error, int line, int column,
 int jsonp_strtod(strbuffer_t *strbuffer, double *out);
 int jsonp_dtostr(char *buffer, size_t size, double value);
 
+/* For estimating precision needed to store a real number */
+int jsonp_count_significand_digits(strbuffer_t *strbuffer);
+
+/* Global context */
+
+typedef struct json_context {
+    json_memory_funcs_t memfuncs;
+    int have_bigint;
+    int have_bigreal;
+    json_bigint_funcs_t bigint;
+    json_bigreal_funcs_t bigreal;
+} json_context_t;
+
+json_context_t *jsonp_context(void);
+
 /* Wrappers for custom memory functions */
-void* jsonp_malloc(size_t size);
+void *jsonp_malloc(size_t size);
 void jsonp_free(void *ptr);
+void jsonp_overwrite(void *ptr, size_t size);
 char *jsonp_strdup(const char *str);
 
 #endif
