@@ -1,3 +1,5 @@
+EXTRA_DIST = jansson.def
+
 include_HEADERS = jansson.h jansson_config.h
 
 lib_LTLIBRARIES = libjansson.la
@@ -17,10 +19,6 @@ libjansson_la_SOURCES = \
 	utf.h \
 	value.c
 libjansson_la_LDFLAGS = \
+	-no-undefined \
 	-export-symbols-regex '^json_' \
-	-version-info 6:1:2
-
-if GCC
-# These flags are gcc specific
-AM_CFLAGS = -Wall -Wextra -Wdeclaration-after-statement -Werror
-endif
+	-version-info 9:0:5

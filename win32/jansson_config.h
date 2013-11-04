@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2011 Petri Lehtinen <petri@digip.org>
+ * Copyright (c) 2010-2013 Petri Lehtinen <petri@digip.org>
  *
  * Jansson is free software; you can redistribute it and/or modify
  * it under the terms of the MIT license. See LICENSE for details.
@@ -24,11 +24,12 @@
 #ifdef __cplusplus
 #define JSON_INLINE inline
 #else
-#define JSON_INLINE 
+#define JSON_INLINE __inline
 #endif
 
-/* If your compiler supports the `long long` type,
-   JSON_INTEGER_IS_LONG_LONG is defined to 1, otherwise to 0. */
+/* If your compiler supports the `long long` type and the strtoll()
+   library function, JSON_INTEGER_IS_LONG_LONG is defined to 1,
+   otherwise to 0. */
 #define JSON_INTEGER_IS_LONG_LONG 1
 
 /* If locale.h and localeconv() are available, define to 1,

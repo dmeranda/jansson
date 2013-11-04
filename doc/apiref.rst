@@ -41,7 +41,7 @@ set to zero.
 The following preprocessor constants specify the current version of
 the library:
 
-``JANSSON_VERSION_MAJOR``, ``JANSSON_VERSION_MINOR``, ``JANSSON_VERSION_MICRO``
+``JANSSON_MAJOR_VERSION``, ``JANSSON_MINOR_VERSION``, ``JANSSON_MICRO_VERSION``
   Integers specifying the major, minor and micro versions,
   respectively.
 
@@ -201,7 +201,7 @@ The following functions are used to manipulate the reference count.
 
 .. function:: json_t *json_incref(json_t *json)
 
-   Increment the reference count of *json* if it's not non-*NULL*.
+   Increment the reference count of *json* if it's not *NULL*.
    Returns *json*.
 
 .. function:: void json_decref(json_t *json)
@@ -288,8 +288,8 @@ returns an error status.
 True, False and Null
 ====================
 
-These values are implemented as singletons, so each of these functions
-returns the same value each time.
+These three values are implemented as singletons, so the returned
+pointers won't change between invocations of these functions.
 
 .. function:: json_t *json_true(void)
 
@@ -302,6 +302,17 @@ returns the same value each time.
    .. refcounting:: new
 
    Returns the JSON false value.
+
+.. function:: json_t *json_boolean(val)
+
+   .. refcounting:: new
+
+   Returns JSON false if ``val`` is zero, and JSON true otherwise.
+   This is a macro, and equivalent to ``val ? json_true() :
+   json_false()``.
+
+   .. versionadded:: 2.4
+
 
 .. function:: json_t *json_null(void)
 
@@ -413,7 +424,6 @@ All of the functions and macros for dealing with the big number types
 in the section :ref:`apiref-big-number-extension`.
 
 ``JSON_INTEGER_IS_LONG_LONG``
-
    This is a preprocessor variable that holds the value 1 if
    :type:`json_int_t` is ``long long``, and 0 if it's ``long``. It
    can be used as follows::
@@ -425,7 +435,6 @@ in the section :ref:`apiref-big-number-extension`.
        #endif
 
 ``JSON_INTEGER_FORMAT``
-
    This is a macro that expands to a :func:`printf()` conversion
    specifier that corresponds to :type:`json_int_t`, without the
    leading ``%`` sign, i.e. either ``"lld"`` or ``"ld"``. This macro
@@ -561,6 +570,35 @@ A JSON array is an ordered collection of other JSON values.
    Appends all elements in *other_array* to the end of *array*.
    Returns 0 on success and -1 on error.
 
+The following macro can be used to iterate through all elements
+in an array.
+
+.. function:: json_array_foreach(array, index, value)
+
+   Iterate over every element of ``array``, running the block
+   of code that follows each time with the proper values set to
+   variables ``index`` and ``value``, of types :type:`size_t` and
+   :type:`json_t *` respectively. Example::
+
+       /* array is a JSON array */
+       size_t index;
+       json_t *value;
+
+       json_array_foreach(array, index, value) {
+           /* block of code that uses index and value */
+       }
+
+   The items are returned in increasing index order.
+
+   This macro expands to an ordinary ``for`` statement upon
+   preprocessing, so its performance is equivalent to that of
+   hand-written code using the array access functions.
+   The main advantage of this macro is that it abstracts
+   away the complexity, and makes for shorter, more
+   concise code.
+
+   .. versionadded:: 2.5
+
 
 Object
 ======
@@ -631,6 +669,51 @@ Unicode string and the value is any JSON value.
    Update *object* with the key-value pairs from *other*, overwriting
    existing keys. Returns 0 on success or -1 on error.
 
+.. function:: int json_object_update_existing(json_t *object, json_t *other)
+
+   Like :func:`json_object_update()`, but only the values of existing
+   keys are updated. No new keys are created. Returns 0 on success or
+   -1 on error.
+
+   .. versionadded:: 2.3
+
+.. function:: int json_object_update_missing(json_t *object, json_t *other)
+
+   Like :func:`json_object_update()`, but only new keys are created.
+   The value of any existing key is not changed. Returns 0 on success
+   or -1 on error.
+
+   .. versionadded:: 2.3
+
+The following macro can be used to iterate through all key-value pairs
+in an object.
+
+.. function:: json_object_foreach(object, key, value)
+
+   Iterate over every key-value pair of ``object``, running the block
+   of code that follows each time with the proper values set to
+   variables ``key`` and ``value``, of types :type:`const char *` and
+   :type:`json_t *` respectively. Example::
+
+       /* obj is a JSON object */
+       const char *key;
+       json_t *value;
+
+       json_object_foreach(obj, key, value) {
+           /* block of code that uses key and value */
+       }
+
+   The items are not returned in any particular order.
+
+   This macro expands to an ordinary ``for`` statement upon
+   preprocessing, so its performance is equivalent to that of
+   hand-written iteration code using the object iteration protocol
+   (see below). The main advantage of this macro is that it abstracts
+   away the complexity behind iteration, and makes for shorter, more
+   concise code.
+
+   .. versionadded:: 2.3
+
 
 The following functions implement an iteration protocol for objects,
 allowing to iterate through all key-value pairs in an object. The
@@ -677,11 +760,21 @@ sorting due to the internal hashtable implementation.
    *value*. This is useful when *value* is newly created and not used
    after the call.
 
+.. function:: void *json_object_key_to_iter(const char *key)
+
+   Like :func:`json_object_iter_at()`, but much faster. Only works for
+   values returned by :func:`json_object_iter_key()`. Using other keys
+   will lead to segfaults. This function is used internally to
+   implement :func:`json_object_foreach`.
+
+   .. versionadded:: 2.3
+
 The iteration protocol can be used for example as follows::
 
    /* obj is a JSON object */
    const char *key;
    json_t *value;
+
    void *iter = json_object_iter(obj);
    while(iter)
    {
@@ -742,7 +835,9 @@ and pass a pointer to a function. Example::
    }
 
 Also note that if the call succeeded (``json != NULL`` in the above
-example), the contents of ``error`` are unspecified.
+example), the contents of ``error`` are generally left unspecified.
+The decoding functions write to the ``position`` member also on
+success. See :ref:`apiref-decoding` for more info.
 
 All functions also accept *NULL* as the :type:`json_error_t` pointer,
 in which case no error information is returned to the caller.
@@ -804,10 +899,14 @@ can be ORed together to obtain *flags*.
    **Note:** Encoding any value may be useful in some scenarios, but
    it's generally discouraged as it violates strict compatiblity with
    :rfc:`4627`. If you use this flag, don't expect interoperatibility
-   with other JSON systems. Even Jansson itself doesn't have any means
-   to decode JSON texts whose root value is not object or array.
+   with other JSON systems.
 
    .. versionadded:: 2.1
+
+``JSON_ESCAPE_SLASH``
+   Escape the ``/`` characters in strings with ``\/``.
+
+   .. versionadded:: 2.4
 
 The following functions perform the actual JSON encoding. The result
 is in UTF-8.
@@ -867,7 +966,8 @@ text to the Jansson representation of JSON data. The JSON
 specification requires that a JSON text is either a serialized array
 or object, and this requirement is also enforced with the following
 functions. In other words, the top level value in the JSON text being
-decoded must be either array or object.
+decoded must be either array or object. To decode any JSON value, use
+the ``JSON_DECODE_ANY`` flag (see below).
 
 See :ref:`rfc-conformance` for a discussion on Jansson's conformance
 to the JSON specification. It explains many design decisions that
@@ -886,6 +986,17 @@ macros can be ORed together to obtain *flags*.
 
    .. versionadded:: 2.1
 
+``JSON_DECODE_ANY``
+   By default, the decoder expects an array or object as the input.
+   With this flag enabled, the decoder accepts any valid JSON value.
+
+   **Note:** Decoding any value may be useful in some scenarios, but
+   it's generally discouraged as it violates strict compatiblity with
+   :rfc:`4627`. If you use this flag, don't expect interoperatibility
+   with other JSON systems.
+
+   .. versionadded:: 2.3
+
 ``JSON_DISABLE_EOF_CHECK``
    By default, the decoder expects that its whole input constitutes a
    valid JSON text, and issues an error if there's extra data after
@@ -893,7 +1004,26 @@ macros can be ORed together to obtain *flags*.
    stops after decoding a valid JSON array or object, and thus allows
    extra data after the JSON text.
 
-   .. versionadded:: 2.3
+   Normally, reading will stop when the last ``]`` or ``}`` in the
+   JSON input is encountered. If both ``JSON_DISABLE_EOF_CHECK`` and
+   ``JSON_DECODE_ANY`` flags are used, the decoder may read one extra
+   UTF-8 code unit (up to 4 bytes of input). For example, decoding
+   ``4true`` correctly decodes the integer 4, but also reads the
+   ``t``. For this reason, if reading multiple consecutive values that
+   are not arrays or objects, they should be separated by at least one
+   whitespace character.
+
+   .. versionadded:: 2.1
+
+``JSON_DECODE_INT_AS_REAL``
+   JSON defines only one number type. Jansson distinguishes between
+   ints and reals. For more information see :ref:`real-vs-integer`.
+   With this flag enabled the decoder interprets all numbers as real
+   values. Integers that do not have an exact double representation
+   will silently result in a loss of precision. Integers that cause
+   a double overflow will cause an error.
+
+   .. versionadded:: 2.5
 
 ``JSON_USE_BIGINT``
    This will enable the use of a big number package to be used to
@@ -902,10 +1032,14 @@ macros can be ORed together to obtain *flags*.
    be stored in a :type:`json_int_t` will use the big number
    extension.
 
+   .. versionadded:: 2.6
+
 ``JSON_USE_BIGINT_ALWAYS``
    This flag implies ``JSON_USE_BIGINT`` and differs by using the big
    number extension to store all JSON integers, even those that could
    have otherwise been stored in a :type:`json_int_t`.
+
+   .. versionadded:: 2.6
 
 ``JSON_USE_BIGREAL``
    This will enable the use of a big number package to be used to
@@ -916,11 +1050,26 @@ macros can be ORed together to obtain *flags*.
    precision (dropped significant digits), will use the big number
    extension.
 
+   .. versionadded:: 2.6
+
 ``JSON_USE_BIGREAL_ALWAYS``
    This flag implies ``JSON_USE_BIGREAL`` and differs by using the big
    number extension to store all JSON reals, even those that could
    have otherwise been accurately stored in a :type:`json_real_t`.
 
+   .. versionadded:: 2.6
+
+Each function also takes an optional :type:`json_error_t` parameter
+that is filled with error information if decoding fails. It's also
+updated on success; the number of bytes of input read is written to
+its ``position`` field. This is especially useful when using
+``JSON_DISABLE_EOF_CHECK`` to read multiple consecutive JSON texts.
+
+.. versionadded:: 2.3
+   Number of bytes of input read is written to the ``position`` field
+   of the :type:`json_error_t` structure.
+
+If no error or position information is needed, you can pass *NULL*.
 
 The following functions perform the actual JSON decoding.
 
@@ -972,6 +1121,35 @@ The following functions perform the actual JSON decoding.
    filled with information about the error. *flags* is described
    above.
 
+.. type:: json_load_callback_t
+
+   A typedef for a function that's called by
+   :func:`json_load_callback()` to read a chunk of input data::
+
+       typedef size_t (*json_load_callback_t)(void *buffer, size_t buflen, void *data);
+
+   *buffer* points to a buffer of *buflen* bytes, and *data* is the
+   corresponding :func:`json_load_callback()` argument passed through.
+
+   On success, the function should return the number of bytes read; a
+   returned value of 0 indicates that no data was read and that the
+   end of file has been reached. On error, the function should return
+   ``(size_t)-1`` to abort the decoding process.
+
+   .. versionadded:: 2.4
+
+.. function:: json_t *json_load_callback(json_load_callback_t callback, void *data, size_t flags, json_error_t *error)
+
+   .. refcounting:: new
+
+   Decodes the JSON text produced by repeated calls to *callback*, and
+   returns the array or object it contains, or *NULL* on error, in
+   which case *error* is filled with information about the error.
+   *data* is passed through to *callback* on each call. *flags* is
+   described above.
+
+   .. versionadded:: 2.4
+
 
 .. _apiref-pack:
 
@@ -994,12 +1172,24 @@ items::
     /* Create the JSON array ["foo", "bar", true] */
     json_pack("[ssb]", "foo", "bar", 1);
 
-Here's the full list of format characters. The type in parentheses
+Here's the full list of format specifiers. The type in parentheses
 denotes the resulting JSON type, and the type in brackets (if any)
-denotes the C type that is expected as the corresponding argument.
+denotes the C type that is expected as the corresponding argument or
+arguments.
 
 ``s`` (string) [const char \*]
     Convert a NULL terminated UTF-8 string to a JSON string.
+
+``s#`` (string) [const char \*, int]
+    Convert a UTF-8 buffer of a given length to a JSON string.
+
+``+`` [const char \*]
+    Like ``s``, but concatenate to the previous string. Only valid
+    after ``s``, ``s#``, ``+`` or ``+#``.
+
+``+#`` [const char \*, int]
+    Like ``s#``, but concatenate to the previous string. Only valid
+    after ``s``, ``s#``, ``+`` or ``+#``.
 
 ``n`` (null)
     Output a JSON null value. No argument is consumed.
@@ -1047,10 +1237,13 @@ denotes the C type that is expected as the corresponding argument.
 
 ``{fmt}`` (object)
     Build an object with contents from the inner format string
-    ``fmt``. The first, third, etc. format character represent a key,
-    and must be ``s`` (as object keys are always strings). The second,
-    fourth, etc. format character represent a value. Any value may be
-    an object or array, i.e. recursive value building is supported.
+    ``fmt``. The first, third, etc. format specifier represent a key,
+    and must be a string (see ``s``, ``s#``, ``+`` and ``+#`` above),
+    as object keys are always strings. The second, fourth, etc. format
+    specifier represent a value. Any value may be an object or array,
+    i.e. recursive value building is supported.
+
+Whitespace, ``:`` and ``,`` are ignored.
 
 The following functions compose the value building API:
 
@@ -1059,9 +1252,9 @@ The following functions compose the value building API:
    .. refcounting:: new
 
    Build a new JSON value according to the format string *fmt*. For
-   each format character (except for ``{}[]n``), one argument is
-   consumed and used to build the corresponding value. Returns *NULL*
-   on error.
+   each format specifier (except for ``{}[]n``), one or more arguments
+   are consumed and used to build the corresponding value. Returns
+   *NULL* on error.
 
 .. function:: json_t *json_pack_ex(json_error_t *error, size_t flags, const char *fmt, ...)
               json_t *json_vpack_ex(json_error_t *error, size_t flags, const char *fmt, va_list ap)
@@ -1088,7 +1281,14 @@ More examples::
   json_pack("{s:i, s:i}", "foo", 42, "bar", 7);
 
   /* Build the JSON array [[1, 2], {"cool": true}] */
-  json_pack("[[i,i],{s:b]]", 1, 2, "cool", 1);
+  json_pack("[[i,i],{s:b}]", 1, 2, "cool", 1);
+
+  /* Build a string from a non-NUL terminated buffer */
+  char buffer[4] = {'t', 'e', 's', 't'};
+  json_pack("s#", buffer, 4);
+
+  /* Concatentate strings together to build the JSON string "foobarbaz" */
+  json_pack("s++", "foo", "bar", "baz");
 
 
 .. _apiref-unpack:
@@ -1096,7 +1296,7 @@ More examples::
 Parsing and Validating Values
 =============================
 
-This sectinon describes functions that help to validate complex values
+This section describes functions that help to validate complex values
 and extract, or *unpack*, data from them. Like :ref:`building values
 <apiref-pack>`, this is also based on format strings.
 
@@ -1104,10 +1304,10 @@ While a JSON value is unpacked, the type specified in the format
 string is checked to match that of the JSON value. This is the
 validation part of the process. In addition to this, the unpacking
 functions can also check that all items of arrays and objects are
-unpacked. This check be enabled with the format character ``!`` or by
+unpacked. This check be enabled with the format specifier ``!`` or by
 using the flag ``JSON_STRICT``. See below for details.
 
-Here's the full list of format characters. The type in parentheses
+Here's the full list of format specifiers. The type in parentheses
 denotes the JSON type, and the type in brackets (if any) denotes the C
 type whose address should be passed.
 
@@ -1178,29 +1378,36 @@ type whose address should be passed.
 
 ``{fmt}`` (object)
     Convert each item in the JSON object according to the inner format
-    string ``fmt``. The first, third, etc. format character represent
+    string ``fmt``. The first, third, etc. format specifier represent
     a key, and must be ``s``. The corresponding argument to unpack
     functions is read as the object key. The second fourth, etc.
-    format character represent a value and is written to the address
+    format specifier represent a value and is written to the address
     given as the corresponding argument. **Note** that every other
     argument is read from and every other is written to.
 
     ``fmt`` may contain objects and arrays as values, i.e. recursive
     value extraction is supporetd.
 
+    .. versionadded:: 2.3
+       Any ``s`` representing a key may be suffixed with a ``?`` to
+       make the key optional. If the key is not found, nothing is
+       extracted. See below for an example.
+
 ``!``
-    This special format character is used to enable the check that
+    This special format specifier is used to enable the check that
     all object and array items are accessed, on a per-value basis. It
-    must appear inside an array or object as the last format character
+    must appear inside an array or object as the last format specifier
     before the closing bracket or brace. To enable the check globally,
     use the ``JSON_STRICT`` unpacking flag.
 
 ``*``
-    This special format character is the opposite of ``!``. If the
+    This special format specifier is the opposite of ``!``. If the
     ``JSON_STRICT`` flag is used, ``*`` can be used to disable the
     strict check on a per-value basis. It must appear inside an array
-    or object as the last format character before the closing bracket
+    or object as the last format specifier before the closing bracket
     or brace.
+
+Whitespace, ``:`` and ``,`` are ignored.
 
 The following functions compose the parsing and validation API:
 
@@ -1233,13 +1440,13 @@ The following functions compose the parsing and validation API:
 
    The first argument of all unpack functions is ``json_t *root``
    instead of ``const json_t *root``, because the use of ``O`` format
-   character causes the reference count of ``root``, or some value
+   specifier causes the reference count of ``root``, or some value
    reachable from ``root``, to be increased. Furthermore, the ``o``
-   format character may be used to extract a value as-is, which allows
+   format specifier may be used to extract a value as-is, which allows
    modifying the structure or contents of a value reachable from
    ``root``.
 
-   If the ``O`` and ``o`` format character are not used, it's
+   If the ``O`` and ``o`` format specifiers are not used, it's
    perfectly safe to cast a ``const json_t *`` variable to plain
    ``json_t *`` when used with these functions.
 
@@ -1248,7 +1455,7 @@ The following unpacking flags are available:
 ``JSON_STRICT``
     Enable the extra validation step checking that all object and
     array items are unpacked. This is equivalent to appending the
-    format character ``!`` to the end of every array and object in the
+    format specifier ``!`` to the end of every array and object in the
     format string.
 
 ``JSON_VALIDATE_ONLY``
@@ -1278,6 +1485,13 @@ Examples::
     int myint1, myint2;
     json_unpack(root, "[ii!]", &myint1, &myint2);
     /* returns -1 for failed validation */
+
+    /* root is an empty JSON object */
+    int myint = 0, myint2 = 0;
+    json_unpack(root, "{s?i, s?[ii]}",
+                "foo", &myint1,
+                "bar", &myint2, &myint3);
+    /* myint1, myint2 or myint3 is no touched as "foo" and "bar" don't exist */
 
 
 Equality
@@ -1342,7 +1556,7 @@ copied in a recursive fashion.
 
    Returns a shallow copy of *value*, or *NULL* on error.
 
-.. function:: json_t *json_deep_copy(json_t *value)
+.. function:: json_t *json_deep_copy(const json_t *value)
 
    .. refcounting:: new
 
@@ -1399,29 +1613,12 @@ overridden if custom behavior is needed.
    Supplying *NULL* as either function pointer will restore the default
    of using :func:`malloc()` or :func:`free()`.
 
-.. function:: void json_set_realloc_func(json_realloc_t realloc_fn)
+**Examples:**
 
-   Uses *realloc_fn* instead of :func:`realloc()`. This function will
-   get passed to any big number extension for its possible use. Note
-   that Jansson does not itself use realloc. This function should be
-   called before any other of Jansson's APIs are called which may deal
-   with big number types.
+Circumvent problems with different CRT heaps on Windows by using
+application's :func:`malloc()` and :func:`free()`::
 
-   Supplying *NULL* as the function pointer will restore the default of
-   using :func:`realloc`.
-
-.. function:: void json_set_overwrite_func(json_overwrite_t overwrite_fn)
-
-   Uses *overwrite_fn* to overwrite a region of memory. The default is
-   to use an internal function that wraps :func:`memset()` to write
-   zero-bytes. However as some systems may optimize away the memset
-   technique, a caller may wish to provide a more secure memory
-   overwriting function.
-
-   Supplying *NULL* as the function pointer will restore the default
-   of using an internal :func:`memset()` based wrapper.
-
-Examples:
+    json_set_alloc_funcs(malloc, free);
 
 Use the `Boehm's conservative garbage collector`_ for memory
 operations::
@@ -1498,6 +1695,28 @@ memory, see
 http://www.dwheeler.com/secure-programs/Secure-Programs-HOWTO/protect-secrets.html.
 The page also explains the :func:`guaranteed_memset()` function used
 in the example and gives a sample implementation for it.
+
+.. function:: void json_set_realloc_func(json_realloc_t realloc_fn)
+
+   Uses *realloc_fn* instead of :func:`realloc()`. This function will
+   get passed to any big number extension for its possible use. Note
+   that Jansson does not itself use realloc. This function should be
+   called before any other of Jansson's APIs are called which may deal
+   with big number types.
+
+   Supplying *NULL* as the function pointer will restore the default of
+   using :func:`realloc`.
+
+.. function:: void json_set_overwrite_func(json_overwrite_t overwrite_fn)
+
+   Uses *overwrite_fn* to overwrite a region of memory. The default is
+   to use an internal function that wraps :func:`memset()` to write
+   zero-bytes. However as some systems may optimize away the memset
+   technique, a caller may wish to provide a more secure memory
+   overwriting function.
+
+   Supplying *NULL* as the function pointer will restore the default
+   of using an internal :func:`memset()` based wrapper.
 
 .. _apiref-big-number-extension:
 

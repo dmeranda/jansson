@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2011 Petri Lehtinen <petri@digip.org>
+ * Copyright (c) 2009-2013 Petri Lehtinen <petri@digip.org>
  *
  * Jansson is free software; you can redistribute it and/or modify
  * it under the terms of the MIT license. See LICENSE for details.
@@ -13,7 +13,7 @@
 
 #define BUFFER_SIZE  (256 * 1024)  /* 256 KB */
 
-#define URL_FORMAT   "http://github.com/api/v2/json/commits/list/%s/%s/master"
+#define URL_FORMAT   "https://api.github.com/repos/%s/%s/commits"
 #define URL_SIZE     256
 
 /* Return the offset of the first newline in text or the length of
@@ -51,15 +51,19 @@ static size_t write_response(void *ptr, size_t size, size_t nmemb, void *stream)
 
 static char *request(const char *url)
 {
-    CURL *curl;
+    CURL *curl = NULL;
     CURLcode status;
-    char *data;
+    char *data = NULL;
     long code;
 
+    curl_global_init(CURL_GLOBAL_ALL);
     curl = curl_easy_init();
+    if(!curl)
+        goto error;
+
     data = malloc(BUFFER_SIZE);
-    if(!curl || !data)
-        return NULL;
+    if(!data)
+        goto error;
 
     struct write_result write_result = {
         .data = data,
@@ -75,14 +79,14 @@ static char *request(const char *url)
     {
         fprintf(stderr, "error: unable to request data from %s:\n", url);
         fprintf(stderr, "%s\n", curl_easy_strerror(status));
-        return NULL;
+        goto error;
     }
 
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
     if(code != 200)
     {
         fprintf(stderr, "error: server responded with code %ld\n", code);
-        return NULL;
+        goto error;
     }
 
     curl_easy_cleanup(curl);
@@ -92,6 +96,14 @@ static char *request(const char *url)
     data[write_result.pos] = '\0';
 
     return data;
+
+error:
+    if(data)
+        free(data);
+    if(curl)
+        curl_easy_cleanup(curl);
+    curl_global_cleanup();
+    return NULL;
 }
 
 int main(int argc, char *argv[])
@@ -102,7 +114,6 @@ int main(int argc, char *argv[])
 
     json_t *root;
     json_error_t error;
-    json_t *commits;
 
     if(argc != 3)
     {
@@ -126,42 +137,52 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    commits = json_object_get(root, "commits");
-    if(!json_is_array(commits))
+    if(!json_is_array(root))
     {
-        fprintf(stderr, "error: commits is not an array\n");
+        fprintf(stderr, "error: root is not an array\n");
+        json_decref(root);
         return 1;
     }
 
-    for(i = 0; i < json_array_size(commits); i++)
+    for(i = 0; i < json_array_size(root); i++)
     {
-        json_t *commit, *id, *message;
+        json_t *data, *sha, *commit, *message;
         const char *message_text;
 
-        commit = json_array_get(commits, i);
-        if(!json_is_object(commit))
+        data = json_array_get(root, i);
+        if(!json_is_object(data))
         {
-            fprintf(stderr, "error: commit %d is not an object\n", i + 1);
+            fprintf(stderr, "error: commit data %d is not an object\n", (int)(i + 1));
+            json_decref(root);
             return 1;
         }
 
-        id = json_object_get(commit, "id");
-        if(!json_is_string(id))
+        sha = json_object_get(data, "sha");
+        if(!json_is_string(sha))
         {
-            fprintf(stderr, "error: commit %d: id is not a string\n", i + 1);
+            fprintf(stderr, "error: commit %d: sha is not a string\n", (int)(i + 1));
+            return 1;
+        }
+
+        commit = json_object_get(data, "commit");
+        if(!json_is_object(commit))
+        {
+            fprintf(stderr, "error: commit %d: commit is not an object\n", (int)(i + 1));
+            json_decref(root);
             return 1;
         }
 
         message = json_object_get(commit, "message");
         if(!json_is_string(message))
         {
-            fprintf(stderr, "error: commit %d: message is not a string\n", i + 1);
+            fprintf(stderr, "error: commit %d: message is not a string\n", (int)(i + 1));
+            json_decref(root);
             return 1;
         }
 
         message_text = json_string_value(message);
         printf("%.8s %.*s\n",
-               json_string_value(id),
+               json_string_value(sha),
                newline_offset(message_text),
                message_text);
     }
