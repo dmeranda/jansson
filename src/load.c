@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2013 Petri Lehtinen <petri@digip.org>
+ * Copyright (c) 2009-2014 Petri Lehtinen <petri@digip.org>
  *
  * Jansson is free software; you can redistribute it and/or modify
  * it under the terms of the MIT license. See LICENSE for details.
@@ -70,7 +70,10 @@ typedef struct {
     strbuffer_t saved_text;
     int token;
     union {
-        char *string;
+        struct {
+            char *val;
+            size_t len;
+        } string;
         json_int_t integer;
         double real;
         json_bigz_t bigz;
@@ -293,6 +296,13 @@ static void lex_save_cached(lex_t *lex)
     }
 }
 
+static void lex_free_string(lex_t *lex)
+{
+    jsonp_free(lex->value.string.val);
+    lex->value.string.val = NULL;
+    lex->value.string.len = 0;
+}
+
 /* assumes that str points to 'u' plus at least 4 valid hex digits */
 static int32_t decode_unicode_escape(const char *str)
 {
@@ -311,7 +321,7 @@ static int32_t decode_unicode_escape(const char *str)
         else if(l_isupper(c))
             value += c - 'A' + 10;
         else
-            assert(0);
+            return -1;
     }
 
     return value;
@@ -324,7 +334,7 @@ static void lex_scan_string(lex_t *lex, json_error_t *error)
     char *t;
     int i;
 
-    lex->value.string = NULL;
+    lex->value.string.val = NULL;
     lex->token = TOKEN_INVALID;
 
     c = lex_get_save(lex, error);
@@ -379,14 +389,12 @@ static void lex_scan_string(lex_t *lex, json_error_t *error)
          - two \uXXXX escapes (length 12) forming an UTF-16 surrogate pair
            are converted to 4 bytes
     */
-    lex->value.string = jsonp_malloc(lex->saved_text.length + 1);
-    if(!lex->value.string) {
+    t = jsonp_malloc(lex->saved_text.length + 1);
+    if(!t) {
         /* this is not very nice, since TOKEN_INVALID is returned */
         goto out;
     }
-
-    /* the target */
-    t = lex->value.string;
+    lex->value.string.val = t;
 
     /* + 1 to skip the " */
     p = strbuffer_value(&lex->saved_text) + 1;
@@ -395,17 +403,24 @@ static void lex_scan_string(lex_t *lex, json_error_t *error)
         if(*p == '\\') {
             p++;
             if(*p == 'u') {
-                char buffer[4];
-                int length;
+                size_t length;
                 int32_t value;
 
                 value = decode_unicode_escape(p);
+                if(value < 0) {
+                    error_set(error, lex, "invalid Unicode escape '%.6s'", p - 1);
+                    goto out;
+                }
                 p += 5;
 
                 if(0xD800 <= value && value <= 0xDBFF) {
                     /* surrogate pair */
                     if(*p == '\\' && *(p + 1) == 'u') {
                         int32_t value2 = decode_unicode_escape(++p);
+                        if(value2 < 0) {
+                            error_set(error, lex, "invalid Unicode escape '%.6s'", p - 1);
+                            goto out;
+                        }
                         p += 5;
 
                         if(0xDC00 <= value2 && value2 <= 0xDFFF) {
@@ -434,16 +449,9 @@ static void lex_scan_string(lex_t *lex, json_error_t *error)
                     error_set(error, lex, "invalid Unicode '\\u%04X'", value);
                     goto out;
                 }
-                else if(value == 0)
-                {
-                    error_set(error, lex, "\\u0000 is not allowed");
-                    goto out;
-                }
 
-                if(utf8_encode(value, buffer, &length))
+                if(utf8_encode(value, t, &length))
                     assert(0);
-
-                memcpy(t, buffer, length);
                 t += length;
             }
             else {
@@ -465,11 +473,12 @@ static void lex_scan_string(lex_t *lex, json_error_t *error)
             *(t++) = *(p++);
     }
     *t = '\0';
+    lex->value.string.len = t - lex->value.string.val;
     lex->token = TOKEN_STRING;
     return;
 
 out:
-    jsonp_free(lex->value.string);
+    lex_free_string(lex);
 }
 
 #ifndef JANSSON_USING_CMAKE /* disabled if using cmake */
@@ -501,7 +510,8 @@ static int lex_scan_number(lex_t *lex, int c, size_t flags, json_error_t *error)
         c = lex_get_save(lex, error);
         if(l_isdigit(c)) {
             lex_unget_unsave(lex, c);
-	    error_set(error, lex, "numbers may not have unnecessary leading zeros");
+	    error_set(error, lex,
+                      "numbers may not have unnecessary leading zeros");
             goto out;
         }
     }
@@ -522,9 +532,9 @@ static int lex_scan_number(lex_t *lex, int c, size_t flags, json_error_t *error)
 
         errno = 0;
 
-	if( flags & JSON_USE_BIGINT_ALWAYS ) {
+	if(flags & JSON_USE_BIGINT_ALWAYS) {
 	    json_bigz_t bigvalue;
-	    bigvalue = ctx->bigint.from_string_fn( saved_text, &ctx->memfuncs );
+	    bigvalue = ctx->bigint.from_string_fn(saved_text, &ctx->memfuncs);
 	    lex->token = TOKEN_BIGINTEGER;
 	    lex->value.bigz = bigvalue;
 	}
@@ -533,9 +543,9 @@ static int lex_scan_number(lex_t *lex, int c, size_t flags, json_error_t *error)
 
 	    value = json_strtoint(saved_text, &end, 10);
 	    if(errno == ERANGE) {
-		if( flags & JSON_USE_BIGINT ) {
+		if(flags & JSON_USE_BIGINT) {
 		    json_bigz_t bigvalue;
-		    bigvalue = ctx->bigint.from_string_fn( saved_text, &ctx->memfuncs );
+		    bigvalue = ctx->bigint.from_string_fn(saved_text, &ctx->memfuncs);
 		    lex->token = TOKEN_BIGINTEGER;
 		    lex->value.bigz = bigvalue;
 		}
@@ -570,7 +580,7 @@ static int lex_scan_number(lex_t *lex, int c, size_t flags, json_error_t *error)
             c = lex_get_save(lex, error);
     }
 
-    if( (flags & JSON_USE_BIGREAL) && ! (flags & JSON_USE_BIGREAL_ALWAYS) ) {
+    if((flags & JSON_USE_BIGREAL) && ! (flags & JSON_USE_BIGREAL_ALWAYS)) {
 	/* Determine digits of precision needed to store number before
 	 * a partial loss of precision occurs.
 	 */
@@ -594,11 +604,11 @@ static int lex_scan_number(lex_t *lex, int c, size_t flags, json_error_t *error)
 
     lex_unget_unsave(lex, c);
 
-    if( (flags & JSON_USE_BIGREAL_ALWAYS) ||
-	((flags & JSON_USE_BIGREAL) && significand_digits+1 >= DBL_DIG) ) {
+    if((flags & JSON_USE_BIGREAL_ALWAYS) ||
+	((flags & JSON_USE_BIGREAL) && significand_digits+1 >= DBL_DIG)) {
 	json_bigr_t bigvalue = NULL;
 	saved_text = strbuffer_value(&lex->saved_text);
-	bigvalue = ctx->bigreal.from_string_fn( saved_text, &ctx->memfuncs );
+	bigvalue = ctx->bigreal.from_string_fn(saved_text, &ctx->memfuncs);
 	lex->token = TOKEN_BIGREAL;
 	lex->value.bigr = bigvalue;
     }
@@ -607,11 +617,11 @@ static int lex_scan_number(lex_t *lex, int c, size_t flags, json_error_t *error)
 	int rc;
 
 	rc = jsonp_strtod(&lex->saved_text, &value);
-	if( errno == ERANGE && (flags & JSON_USE_BIGREAL) ) {
+	if(errno == ERANGE && (flags & JSON_USE_BIGREAL)) {
 	    /* overflow or underflow */
 	    json_bigr_t bigvalue;
 	    saved_text = strbuffer_value(&lex->saved_text);
-	    bigvalue = ctx->bigreal.from_string_fn( saved_text, &ctx->memfuncs );
+	    bigvalue = ctx->bigreal.from_string_fn(saved_text, &ctx->memfuncs);
 	    lex->token = TOKEN_BIGREAL;
 	    lex->value.bigr = bigvalue;
 	}
@@ -696,13 +706,14 @@ out:
     return lex->token;
 }
 
-static char *lex_steal_string(lex_t *lex)
+static char *lex_steal_string(lex_t *lex, size_t *out_len)
 {
     char *result = NULL;
-    if(lex->token == TOKEN_STRING)
-    {
-        result = lex->value.string;
-        lex->value.string = NULL;
+    if(lex->token == TOKEN_STRING) {
+        result = lex->value.string.val;
+        *out_len = lex->value.string.len;
+        lex->value.string.val = NULL;
+        lex->value.string.len = 0;
     }
     return result;
 }
@@ -720,18 +731,17 @@ static int lex_init(lex_t *lex, get_func get, void *data)
 static void lex_clear(lex_t *lex)
 {
     if(lex->token == TOKEN_STRING) {
-        jsonp_free(lex->value.string);
-	lex->value.string = NULL;
+        lex_free_string(lex);
     }
     else if(lex->token == TOKEN_BIGINTEGER) {
 	json_context_t *ctx = jsonp_context();
-	if( ctx->have_bigint )
+	if(ctx->have_bigint)
 	    ctx->bigint.delete_fn(lex->value.bigz, &ctx->memfuncs);
 	lex->value.bigz = NULL;
     }
     else if(lex->token == TOKEN_BIGREAL) {
 	json_context_t *ctx = jsonp_context();
-	if( ctx->have_bigreal )
+	if(ctx->have_bigreal)
 	    ctx->bigreal.delete_fn(lex->value.bigr, &ctx->memfuncs);
 	lex->value.bigr = NULL;
     }
@@ -761,6 +771,7 @@ static json_t *parse_object(lex_t *lex, size_t flags, json_error_t *error)
 
     while(1) {
         char *key;
+        size_t len;
         json_t *value;
 
         if(lex->token != TOKEN_STRING) {
@@ -768,9 +779,14 @@ static json_t *parse_object(lex_t *lex, size_t flags, json_error_t *error)
             goto error;
         }
 
-        key = lex_steal_string(lex);
+        key = lex_steal_string(lex, &len);
         if(!key)
             return NULL;
+        if (memchr(key, '\0', len)) {
+            jsonp_free(key);
+            error_set(error, lex, "NUL byte in object key not supported");
+            goto error;
+        }
 
         if(flags & JSON_REJECT_DUPLICATES) {
             if(json_object_get(object, key)) {
@@ -869,7 +885,21 @@ static json_t *parse_value(lex_t *lex, size_t flags, json_error_t *error)
 
     switch(lex->token) {
         case TOKEN_STRING: {
-            json = json_string_nocheck(lex->value.string);
+            const char *value = lex->value.string.val;
+            size_t len = lex->value.string.len;
+
+            if(!(flags & JSON_ALLOW_NUL)) {
+                if(memchr(value, '\0', len)) {
+                    error_set(error, lex, "\\u0000 is not allowed without JSON_ALLOW_NUL");
+                    return NULL;
+                }
+            }
+
+            json = jsonp_stringn_nocheck_own(value, len);
+            if(json) {
+                lex->value.string.val = NULL;
+                lex->value.string.len = 0;
+            }
             break;
         }
 
@@ -941,19 +971,19 @@ static json_t *parse_json(lex_t *lex, size_t flags, json_error_t *error)
     json_context_t *ctx = jsonp_context();
     json_t *result;
 
-    if( flags & JSON_USE_BIGINT_ALWAYS )
+    if(flags & JSON_USE_BIGINT_ALWAYS)
 	flags |= JSON_USE_BIGINT;
-    if( flags & JSON_USE_BIGREAL_ALWAYS )
+    if(flags & JSON_USE_BIGREAL_ALWAYS)
 	flags |= JSON_USE_BIGREAL;
 
-    if( (flags & JSON_USE_BIGINT) && !ctx->have_bigint ) {
+    if((flags & JSON_USE_BIGINT) && !ctx->have_bigint) {
         error_set(error, lex,
-		 "Programming error: Not prepared to decode big integers");
+                  "Programming error: Not prepared to decode big integers");
 	return NULL;
     }
-    if( (flags & JSON_USE_BIGREAL) && !ctx->have_bigreal ) {
+    if((flags & JSON_USE_BIGREAL) && !ctx->have_bigreal) {
         error_set(error, lex,
-		"Programming error: Not prepared to decode big reals");
+                  "Programming error: Not prepared to decode big reals");
 	return NULL;
     }
 

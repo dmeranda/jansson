@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2013 Petri Lehtinen <petri@digip.org>
+ * Copyright (c) 2009-2014 Petri Lehtinen <petri@digip.org>
  *
  * Jansson is free software; you can redistribute it and/or modify
  * it under the terms of the MIT license. See LICENSE for details.
@@ -49,6 +49,7 @@ typedef struct {
 typedef struct {
     json_t json;
     char *value;
+    size_t length;
 } json_string_t;
 
 typedef struct {
@@ -74,11 +75,15 @@ typedef struct {
 #define json_to_object(json_)  container_of(json_, json_object_t, json)
 #define json_to_array(json_)   container_of(json_, json_array_t, json)
 #define json_to_string(json_)  container_of(json_, json_string_t, json)
-#define json_to_real(json_)   container_of(json_, json_real_t, json)
+#define json_to_real(json_)    container_of(json_, json_real_t, json)
 #define json_to_integer(json_) container_of(json_, json_integer_t, json)
 #define json_to_biginteger(json_) container_of(json_, json_biginteger_t, json)
 #define json_to_bigreal(json_) container_of(json_, json_bigreal_t, json)
 
+/* Create a string by taking ownership of an existing buffer */
+json_t *jsonp_stringn_nocheck_own(const char *value, size_t len);
+
+/* Error message formatting */
 void jsonp_error_init(json_error_t *error, const char *source);
 void jsonp_error_set_source(json_error_t *error, const char *source);
 void jsonp_error_set(json_error_t *error, int line, int column,
@@ -108,8 +113,8 @@ json_context_t *jsonp_context(void);
 /* Wrappers for custom memory functions */
 void *jsonp_malloc(size_t size);
 void jsonp_free(void *ptr);
-char *jsonp_strndup(const char *str, size_t length);
 char *jsonp_strdup(const char *str);
+char *jsonp_strndup(const char *str, size_t len);
 void jsonp_overwrite(void *ptr, size_t size);
 
 /* Windows compatibility */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2013 Petri Lehtinen <petri@digip.org>
+ * Copyright (c) 2009-2014 Petri Lehtinen <petri@digip.org>
  *
  * Jansson is free software; you can redistribute it and/or modify
  * it under the terms of the MIT license. See LICENSE for details.
@@ -89,29 +89,32 @@ typedef JSON_BIGR_TYPE const * json_bigr_const_t;
 
 
 #define json_typeof(json)      ((json)->type)
-#define json_is_object(json)   (json && json_typeof(json) == JSON_OBJECT)
-#define json_is_array(json)    (json && json_typeof(json) == JSON_ARRAY)
-#define json_is_string(json)   (json && json_typeof(json) == JSON_STRING)
-#define json_is_integer(json)  (json && json_typeof(json) == JSON_INTEGER)
+#define json_is_object(json)   ((json) && json_typeof(json) == JSON_OBJECT)
+#define json_is_array(json)    ((json) && json_typeof(json) == JSON_ARRAY)
+#define json_is_string(json)   ((json) && json_typeof(json) == JSON_STRING)
+#define json_is_integer(json)  ((json) && json_typeof(json) == JSON_INTEGER)
 #define json_is_biginteger(json) (json && json_typeof(json) == JSON_BIGINTEGER)
 #define json_is_anyinteger(json) (json_is_integer(json) || json_is_biginteger(json))
-#define json_is_real(json)     (json && json_typeof(json) == JSON_REAL)
+#define json_is_real(json)     ((json) && json_typeof(json) == JSON_REAL)
 #define json_is_bigreal(json)  (json && json_typeof(json) == JSON_BIGREAL)
 #define json_is_anyreal(json)  (json_is_real(json) || json_is_bigreal(json))
 #define json_is_number(json)   (json_is_integer(json) || json_is_real(json))
 #define json_is_bignumber(json) (json_is_biginteger(json) || json_is_bigreal(json))
 #define json_is_anynumber(json) (json_is_number(json) || json_is_bignumber(json))
-#define json_is_true(json)     (json && json_typeof(json) == JSON_TRUE)
-#define json_is_false(json)    (json && json_typeof(json) == JSON_FALSE)
+#define json_is_true(json)     ((json) && json_typeof(json) == JSON_TRUE)
+#define json_is_false(json)    ((json) && json_typeof(json) == JSON_FALSE)
+#define json_boolean_value     json_is_true
 #define json_is_boolean(json)  (json_is_true(json) || json_is_false(json))
-#define json_is_null(json)     (json && json_typeof(json) == JSON_NULL)
+#define json_is_null(json)     ((json) && json_typeof(json) == JSON_NULL)
 
 /* construction, destruction, reference counting */
 
 json_t *json_object(void);
 json_t *json_array(void);
 json_t *json_string(const char *value);
+json_t *json_stringn(const char *value, size_t len);
 json_t *json_string_nocheck(const char *value);
+json_t *json_stringn_nocheck(const char *value, size_t len);
 json_t *json_integer(json_int_t value);
 json_t *json_real(double value);
 json_t *json_true(void);
@@ -229,12 +232,15 @@ int json_array_insert(json_t *array, size_t ind, json_t *value)
 }
 
 const char *json_string_value(const json_t *string);
+size_t json_string_length(const json_t *string);
 json_int_t json_integer_value(const json_t *integer);
 double json_real_value(const json_t *real);
 double json_number_value(const json_t *json);
 
 int json_string_set(json_t *string, const char *value);
+int json_string_setn(json_t *string, const char *value, size_t len);
 int json_string_set_nocheck(json_t *string, const char *value);
+int json_string_setn_nocheck(json_t *string, const char *value, size_t len);
 int json_integer_set(json_t *integer, json_int_t value);
 int json_real_set(json_t *real, double value);
 
@@ -260,7 +266,7 @@ int json_vunpack_ex(json_t *root, json_error_t *error, size_t flags, const char 
 
 /* equality */
 
-int json_equal(const json_t *value1, const json_t *value2);
+int json_equal(json_t *value1, json_t *value2);
 
 
 /* copying */
@@ -275,6 +281,7 @@ json_t *json_deep_copy(const json_t *value);
 #define JSON_DISABLE_EOF_CHECK  0x2
 #define JSON_DECODE_ANY         0x4
 #define JSON_DECODE_INT_AS_REAL 0x8
+#define JSON_ALLOW_NUL          0x10
 
 typedef size_t (*json_load_callback_t)(void *buffer, size_t buflen, void *data);
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2013 Petri Lehtinen <petri@digip.org>
+ * Copyright (c) 2009-2014 Petri Lehtinen <petri@digip.org>
  * Copyright (c) 2011-2012 Basile Starynkevitch <basile@starynkevitch.net>
  *
  * Jansson is free software; you can redistribute it and/or modify it
@@ -12,6 +12,10 @@
 #include "jansson.h"
 #include "jansson_private.h"
 
+/* C89 allows these to be macros */
+#undef malloc
+#undef free
+
 /* current context */
 static json_context_t* jsonp_current_context_ptr = NULL;
 static json_context_t jsonp_current_context;
@@ -20,7 +24,7 @@ static void jsonp_overwrite_memset(void *ptr, size_t size)
 {
     if(size==0 || ptr==NULL)
 	return;
-    memset( ptr, 0, size);
+    memset(ptr, 0, size);
 }
 
 json_context_t *jsonp_context(void)
@@ -67,30 +71,31 @@ void jsonp_free(void *ptr)
 
 char *jsonp_strdup(const char *str)
 {
-    char *new_str;
-    size_t len;
+    return jsonp_strndup(str, strlen(str));
+}
 
-    len = strlen(str);
-    if(len == (size_t)-1)
-        return NULL;
+char *jsonp_strndup(const char *str, size_t len)
+{
+    char *new_str;
 
     new_str = jsonp_malloc(len + 1);
     if(!new_str)
         return NULL;
 
-    memcpy(new_str, str, len + 1);
+    memcpy(new_str, str, len);
+    new_str[len] = '\0';
     return new_str;
 }
 
 void json_set_alloc_funcs(json_malloc_t malloc_fn, json_free_t free_fn)
 {
-    if( malloc_fn == NULL )
+    if(malloc_fn == NULL)
 	malloc_fn = malloc;
-    if( free_fn == NULL )
+    if(free_fn == NULL)
 	free_fn = free;
     jsonp_context()->memfuncs.malloc_fn = malloc_fn;
     jsonp_context()->memfuncs.free_fn = free_fn;
-    if( malloc_fn == malloc )
+    if(malloc_fn == malloc)
 	jsonp_context()->memfuncs.realloc_fn = realloc;
     else
 	jsonp_context()->memfuncs.realloc_fn = NULL;

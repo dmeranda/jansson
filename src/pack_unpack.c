@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2013 Petri Lehtinen <petri@digip.org>
+ * Copyright (c) 2009-2014 Petri Lehtinen <petri@digip.org>
  * Copyright (c) 2011-2012 Graeme Smecher <graeme.smecher@mail.mcgill.ca>
  *
  * Jansson is free software; you can redistribute it and/or modify
@@ -48,7 +48,7 @@ static const char * const type_names[] = {
 
 #define type_name(x) type_names[json_typeof(x)]
 
-static const char *unpack_value_starters = "{[siIbfFOonzr";
+static const char unpack_value_starters[] = "{[siIbfFOonzr";
 
 
 static void scanner_init(scanner_t *s, json_error_t *error,
@@ -127,19 +127,18 @@ static json_t *pack(scanner_t *s, va_list *ap);
 /* ours will be set to 1 if jsonp_free() must be called for the result
    afterwards */
 static char *read_string(scanner_t *s, va_list *ap,
-                         const char *purpose, int *ours)
+                         const char *purpose, size_t *out_len, int *ours)
 {
     char t;
     strbuffer_t strbuff;
     const char *str;
     size_t length;
-    char *result;
 
     next_token(s);
     t = token(s);
     prev_token(s);
 
-    if(t != '#' && t != '+') {
+    if(t != '#' && t != '%' && t != '+') {
         /* Optimize the simple case */
         str = va_arg(*ap, const char *);
 
@@ -148,11 +147,14 @@ static char *read_string(scanner_t *s, va_list *ap,
             return NULL;
         }
 
-        if(!utf8_check_string(str, -1)) {
+        length = strlen(str);
+
+        if(!utf8_check_string(str, length)) {
             set_error(s, "<args>", "Invalid UTF-8 %s", purpose);
             return NULL;
         }
 
+        *out_len = length;
         *ours = 0;
         return (char *)str;
     }
@@ -172,6 +174,9 @@ static char *read_string(scanner_t *s, va_list *ap,
         if(token(s) == '#') {
             length = va_arg(*ap, int);
         }
+        else if(token(s) == '%') {
+            length = va_arg(*ap, size_t);
+        }
         else {
             prev_token(s);
             length = strlen(str);
@@ -190,15 +195,15 @@ static char *read_string(scanner_t *s, va_list *ap,
         }
     }
 
-    result = strbuffer_steal_value(&strbuff);
-
-    if(!utf8_check_string(result, -1)) {
+    if(!utf8_check_string(strbuff.value, strbuff.length)) {
         set_error(s, "<args>", "Invalid UTF-8 %s", purpose);
+        strbuffer_close(&strbuff);
         return NULL;
     }
 
+    *out_len = strbuff.length;
     *ours = 1;
-    return result;
+    return strbuffer_steal_value(&strbuff);
 }
 
 static json_t *pack_object(scanner_t *s, va_list *ap)
@@ -208,6 +213,7 @@ static json_t *pack_object(scanner_t *s, va_list *ap)
 
     while(token(s) != '}') {
         char *key;
+        size_t len;
         int ours;
         json_t *value;
 
@@ -221,15 +227,19 @@ static json_t *pack_object(scanner_t *s, va_list *ap)
             goto error;
         }
 
-        key = read_string(s, ap, "object key", &ours);
+        key = read_string(s, ap, "object key", &len, &ours);
         if(!key)
             goto error;
 
         next_token(s);
 
         value = pack(s, ap);
-        if(!value)
+        if(!value) {
+            if(ours)
+                jsonp_free(key);
+
             goto error;
+        }
 
         if(json_object_set_new_nocheck(object, key, value)) {
             if(ours)
@@ -292,20 +302,20 @@ static json_t *pack(scanner_t *s, va_list *ap)
         case '[':
             return pack_array(s, ap);
 
-        case 's': { /* string */
+        case 's': /* string */
+        {
             char *str;
+            size_t len;
             int ours;
-            json_t *result;
 
-            str = read_string(s, ap, "string", &ours);
+            str = read_string(s, ap, "string", &len, &ours);
             if(!str)
                 return NULL;
 
-            result = json_string_nocheck(str);
-            if(ours)
-                jsonp_free(str);
-
-            return result;
+            if (ours)
+                return jsonp_stringn_nocheck_own(str, len);
+            else
+                return json_stringn_nocheck(str, len);
         }
 
         case 'n': /* null */
@@ -533,16 +543,32 @@ static int unpack(scanner_t *s, json_t *root, va_list *ap)
             }
 
             if(!(s->flags & JSON_VALIDATE_ONLY)) {
-                const char **target;
+                const char **str_target;
+                size_t *len_target = NULL;
 
-                target = va_arg(*ap, const char **);
-                if(!target) {
+                str_target = va_arg(*ap, const char **);
+                if(!str_target) {
                     set_error(s, "<args>", "NULL string argument");
                     return -1;
                 }
 
-                if(root)
-                    *target = json_string_value(root);
+                next_token(s);
+
+                if(token(s) == '%') {
+                    len_target = va_arg(*ap, size_t *);
+                    if(!len_target) {
+                        set_error(s, "<args>", "NULL string length argument");
+                        return -1;
+                    }
+                }
+                else
+                    prev_token(s);
+
+                if(root) {
+                    *str_target = json_string_value(root);
+                    if(len_target)
+                        *len_target = json_string_length(root);
+                }
             }
             return 0;
 
@@ -590,7 +616,7 @@ static int unpack(scanner_t *s, json_t *root, va_list *ap)
 		    set_error(s,"<validation>", "No big integer package registed, can not unpack value");
 		    return -1;
 		}
-		v = ctx->bigint.copy_fn( json_biginteger_value(root),
+		v = ctx->bigint.copy_fn(json_biginteger_value(root),
 					 &ctx->memfuncs);
 		*va_arg(*ap, json_bigz_t*) = v;
 	    }
@@ -611,11 +637,11 @@ static int unpack(scanner_t *s, json_t *root, va_list *ap)
 		    return -1;
 		}
 		if(json_is_biginteger(root))
-		    v = ctx->bigint.copy_fn( json_biginteger_value(root),
+		    v = ctx->bigint.copy_fn(json_biginteger_value(root),
 					     &ctx->memfuncs);
 		else
-		    v = ctx->bigint.from_int_fn( json_integer_value(root),
-						 &ctx->memfuncs );
+		    v = ctx->bigint.from_int_fn(json_integer_value(root),
+						 &ctx->memfuncs);
 		*va_arg(*ap, json_bigz_t*) = v;
 	    }
 	    return 0;
@@ -651,7 +677,7 @@ static int unpack(scanner_t *s, json_t *root, va_list *ap)
             return 0;
 
         case 'F':
-            if(roo && !json_is_number(root) || json_is_bignumber(root)) {
+            if((root && !json_is_number(root)) || json_is_bignumber(root)) {
                 set_error(s, "<validation>", "Expected real or integer, got %s",
                           type_name(root));
                 return -1;
@@ -679,7 +705,7 @@ static int unpack(scanner_t *s, json_t *root, va_list *ap)
 		    set_error(s,"<validation>", "No big real package registed, can not unpack value");
 		    return -1;
 		}
-		v = ctx->bigreal.copy_fn( json_bigreal_value(root),
+		v = ctx->bigreal.copy_fn(json_bigreal_value(root),
 					  &ctx->memfuncs);
 		*va_arg(*ap, json_bigr_t*) = v;
 	    }
@@ -700,11 +726,11 @@ static int unpack(scanner_t *s, json_t *root, va_list *ap)
 		    return -1;
 		}
 		if(json_is_bigreal(root))
-		    v = ctx->bigreal.copy_fn( json_bigreal_value(root),
+		    v = ctx->bigreal.copy_fn(json_bigreal_value(root),
 					      &ctx->memfuncs);
 		else
-		    v = ctx->bigreal.from_real_fn( json_real_value(root),
-						   &ctx->memfuncs );
+		    v = ctx->bigreal.from_real_fn(json_real_value(root),
+						   &ctx->memfuncs);
 		*va_arg(*ap, json_bigz_t*) = v;
 	    }
 	    return 0;
@@ -717,7 +743,7 @@ static int unpack(scanner_t *s, json_t *root, va_list *ap)
 
         case 'v':
         case 'o':
-	   if( token(s) == 'V' || token(s) == 'v' ) {
+	    if(token(s) == 'V' || token(s) == 'v') {
 		if(json_is_array(root) || json_is_object(root)) {
 		    set_error(s,"<validation>", "Expecting a scalar value, got %s",
 			      type_name(root));
@@ -725,10 +751,10 @@ static int unpack(scanner_t *s, json_t *root, va_list *ap)
 		}
 	    }
             if(!(s->flags & JSON_VALIDATE_ONLY)) {
-		json_t **target;
+                json_t **target;
 
-		if(do_incref)
-		    json_incref(root);
+                if(do_incref)
+                    json_incref(root);
 
                 target = va_arg(*ap, json_t**);
                 if(root)

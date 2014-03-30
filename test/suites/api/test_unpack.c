@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2013 Petri Lehtinen <petri@digip.org>
+ * Copyright (c) 2009-2014 Petri Lehtinen <petri@digip.org>
  * Copyright (c) 2010-2012 Graeme Smecher <graeme.smecher@mail.mcgill.ca>
  *
  * Jansson is free software; you can redistribute it and/or modify
@@ -17,6 +17,7 @@ static void run_tests()
     int i1, i2, i3;
     json_int_t I1;
     int rv;
+    size_t z;
     double f;
     char *s;
 
@@ -79,6 +80,13 @@ static void run_tests()
     rv = json_unpack(j, "s", &s);
     if(rv || strcmp(s, "foo"))
         fail("json_unpack string failed");
+    json_decref(j);
+
+    /* string with length (size_t) */
+    j = json_string("foo");
+    rv = json_unpack(j, "s%", &s, &z);
+    if(rv || strcmp(s, "foo") || z != 3)
+        fail("json_unpack string with length (size_t) failed");
     json_decref(j);
 
     /* empty object */
